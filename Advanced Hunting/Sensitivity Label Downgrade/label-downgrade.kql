@@ -1,0 +1,89 @@
+// =============================================================================
+// Query:       Sensitivity Label Downgrade Detection – Strictly Confidential
+// Description: Detects when a file's sensitivity label is downgraded away from
+//              any "Strictly Confidential" tier, which may indicate an attempt
+//              to bypass DLP controls prior to sharing or exfiltration.
+// Data source: CloudAppEvents (Microsoft Defender / Sentinel Advanced Hunting)
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// Function: GetSensitivityLabelName
+// Maps a sensitivity label GUID to its human-readable display name.
+// ---------------------------------------------------------------------------
+let GetSensitivityLabelName = (labelId: string) {
+    case(
+        labelId == "defa4170-0d19-0005-0000-bc88714345d2", "Personal",
+        labelId == "defa4170-0d19-0005-0001-bc88714345d2", "Public",
+        labelId == "defa4170-0d19-0005-0002-bc88714345d2", "General",
+        labelId == "defa4170-0d19-0005-0003-bc88714345d2", "General\\Anyone (Unrestricted)",
+        labelId == "defa4170-0d19-0005-0004-bc88714345d2", "General\\All Employees (Unrestricted)",
+        labelId == "defa4170-0d19-0005-0005-bc88714345d2", "Confidential",
+        labelId == "defa4170-0d19-0005-0006-bc88714345d2", "Confidential\\Anyone (Unrestricted)",
+        labelId == "defa4170-0d19-0005-0007-bc88714345d2", "Confidential\\All Employees",
+        labelId == "defa4170-0d19-0005-0008-bc88714345d2", "Confidential\\Trusted People",
+        labelId == "defa4170-0d19-0005-0009-bc88714345d2", "Strictly Confidential",
+        labelId == "defa4170-0d19-0005-000a-bc88714345d2", "Strictly Confidential\\All Employees",
+        labelId == "defa4170-0d19-0005-000b-bc88714345d2", "Strictly Confidential\\Specified People",
+        labelId == "98be17d9-f42f-4294-8f95-4431963fe59e", "Strictly Confidential\\Tier1 Sites",
+        strcat("Unknown Label (", labelId, ")")
+    )
+};
+
+// ---------------------------------------------------------------------------
+// Constant: List of label IDs considered "Strictly Confidential" tier
+// ---------------------------------------------------------------------------
+let StrictlyConfidentialLabels = pack_array(
+    "defa4170-0d19-0005-0009-bc88714345d2",
+    "defa4170-0d19-0005-000a-bc88714345d2",
+    "defa4170-0d19-0005-000b-bc88714345d2"
+);
+
+// ---------------------------------------------------------------------------
+// Main query
+// ---------------------------------------------------------------------------
+CloudAppEvents
+| where ActionType in~ (
+    "FileSensitivityLabelChanged",
+    "SensitivityLabelUpdated",
+    "FileSensitivityLabelRemoved",
+    "SensitivityLabelRemoved"
+)
+| extend ParsedData = parse_json(tostring(RawEventData))
+| extend
+    SourceFileName = iif(
+        ActionType == "FileSensitivityLabelChanged",
+        tostring(ParsedData.SourceFileName),
+        tostring(ParsedData.ObjectId)
+    ),
+    SiteUrl = tostring(ParsedData.SiteUrl),
+    SourceLabel = tostring(ParsedData.SensitivityLabelEventData.OldSensitivityLabelId),
+    DestinationLabel = tostring(ParsedData.SensitivityLabelEventData.SensitivityLabelId)
+| extend SensitivityLabelJustificationText = trim(
+    " ",
+    strcat(
+        tostring(ParsedData.SensitivityLabelEventData.JustificationText),
+        " ",
+        tostring(ParsedData.SensitivityLabelJustificationText)
+    )
+)
+// Keep only true downgrades: label moves OUT of Strictly Confidential tier
+| where SourceLabel in (StrictlyConfidentialLabels)
+    and DestinationLabel !in (StrictlyConfidentialLabels)
+| project
+    Timestamp,
+    AccountDisplayName,
+    SourceLabelName = GetSensitivityLabelName(SourceLabel),
+    DestinationLabelName = GetSensitivityLabelName(DestinationLabel),
+    SensitivityLabelJustificationText,
+    SourceFileName,
+    Application,
+    UserAgent,
+    SiteUrl,
+    ActionType,
+    AccountId,
+    AccountObjectId,
+    SourceLabel,
+    DestinationLabel,
+    ReportId,
+    RawEventData
+| sort by Timestamp desc
