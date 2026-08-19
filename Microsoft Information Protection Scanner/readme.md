@@ -5,7 +5,8 @@ A PowerShell script that turns a Microsoft Purview Information Protection (MIP) 
 a share-by-share breakdown of Sensitive Information Type (SIT) findings and a click-to-view
 file browser.
 
-![Demo](docs/assets/demo.gif)
+![Demo](/Microsoft%20Information%20Protection%20Scanner/mip-scanner-report.gif)
+
 
 - 100% client-side — no data leaves the machine that opens the report
 - No files are modified, labelled, or protected — read-only reporting
