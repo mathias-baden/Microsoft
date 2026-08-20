@@ -1,6 +1,6 @@
 # 👋 Welcome to my Microsoft Security workspace
 
-I'm Mathias Baden — this repo is where I collect and share scripts, queries, and resources built around the Microsoft security stack: **Purview**, **Defender for Cloud Apps**, and **Advanced Hunting**.
+I'm Mathias Baden — this repo is where I collect and share scripts, queries, and resources built around the Microsoft security stack
 
 🌐 **Website:** [mathiasbaden.com](https://mathiasbaden.com)
 
