@@ -1,89 +1,68 @@
-// =============================================================================
-// Query:       Sensitivity Label Downgrade Detection – Strictly Confidential
-// Description: Detects when a file's sensitivity label is downgraded away from
-//              any "Strictly Confidential" tier, which may indicate an attempt
-//              to bypass DLP controls prior to sharing or exfiltration.
-// Data source: CloudAppEvents (Microsoft Defender / Sentinel Advanced Hunting)
-// =============================================================================
-
-// ---------------------------------------------------------------------------
-// Function: GetSensitivityLabelName
-// Maps a sensitivity label GUID to its human-readable display name.
-// ---------------------------------------------------------------------------
-let GetSensitivityLabelName = (labelId: string) {
+// Define a function to map label IDs to human-readable names.
+let listLabelNames = (labelID: string) {
     case(
-        labelId == "defa4170-0d19-0005-0000-bc88714345d2", "Personal",
-        labelId == "defa4170-0d19-0005-0001-bc88714345d2", "Public",
-        labelId == "defa4170-0d19-0005-0002-bc88714345d2", "General",
-        labelId == "defa4170-0d19-0005-0003-bc88714345d2", "General\\Anyone (Unrestricted)",
-        labelId == "defa4170-0d19-0005-0004-bc88714345d2", "General\\All Employees (Unrestricted)",
-        labelId == "defa4170-0d19-0005-0005-bc88714345d2", "Confidential",
-        labelId == "defa4170-0d19-0005-0006-bc88714345d2", "Confidential\\Anyone (Unrestricted)",
-        labelId == "defa4170-0d19-0005-0007-bc88714345d2", "Confidential\\All Employees",
-        labelId == "defa4170-0d19-0005-0008-bc88714345d2", "Confidential\\Trusted People",
-        labelId == "defa4170-0d19-0005-0009-bc88714345d2", "Strictly Confidential",
-        labelId == "defa4170-0d19-0005-000a-bc88714345d2", "Strictly Confidential\\All Employees",
-        labelId == "defa4170-0d19-0005-000b-bc88714345d2", "Strictly Confidential\\Specified People",
-        labelId == "98be17d9-f42f-4294-8f95-4431963fe59e", "Strictly Confidential\\Tier1 Sites",
-        strcat("Unknown Label (", labelId, ")")
+        labelID == "5f92563e-3b82-49f4-aaa3-022eb8385f2c", "HR",
+        labelID == "3bae0756-6f35-4f0e-bc13-3a3503223767", "OLD",
+        labelID == "f2b2cd73-a7b3-4c23-aa70-d4d98679650e", "Borgerdata – Fortrolig",
+        labelID == "108d4c13-8fd7-4d31-b7f8-614dc715e9f6", "Public",
+        labelID == "afe50af3-1803-4cbf-8bb0-8fc76b31257a", "General",
+        labelID == "defa4170-0d19-0005-0005-bc88714345d2", "Confidential",
+        labelID == "369e5562-f668-4f63-a47e-fbb6d598a6d2", "Confidential - HR",
+        labelID == "082aa0f2-a260-467c-a938-218f22f3f3ad", "Confidential - Internal",
+        labelID == "8f34728f-53a3-45de-9f1b-b1f6d6b52251", "Confidential - Specific People",
+        labelID == "defa4170-0d19-0005-0009-bc88714345d2", "Highly Confidential",
+        labelID == "c91e115c-34f0-4e44-9f94-53f10d30a2f5", "Highly Confidential – RD Falcon",
+        labelID == "3fea72fd-03f0-48ed-bc29-91bc92d67a89", "Highly Confidential - Specific People",
+        labelID == "eb6948e4-a689-418f-add9-145b98813808", "HR DEV",
+        labelID == "fc3b1e91-53fa-4100-9038-8d7c700fbe86", "TEAMS RED",
+        "Sensitivity Label displayName not found"
     )
 };
-
-// ---------------------------------------------------------------------------
-// Constant: List of label IDs considered "Strictly Confidential" tier
-// ---------------------------------------------------------------------------
-let StrictlyConfidentialLabels = pack_array(
-    "defa4170-0d19-0005-0009-bc88714345d2",
-    "defa4170-0d19-0005-000a-bc88714345d2",
-    "defa4170-0d19-0005-000b-bc88714345d2"
-);
-
-// ---------------------------------------------------------------------------
-// Main query
-// ---------------------------------------------------------------------------
-CloudAppEvents
+// Query the CloudAppEvents table for specific action types related to sensitivity labels.
+CloudAppEvents 
 | where ActionType in~ (
     "FileSensitivityLabelChanged",
-    "SensitivityLabelUpdated",
-    "FileSensitivityLabelRemoved",
+    "FileSensitivityLabelRemoved", 
     "SensitivityLabelRemoved"
 )
-| extend ParsedData = parse_json(tostring(RawEventData))
-| extend
-    SourceFileName = iif(
-        ActionType == "FileSensitivityLabelChanged",
-        tostring(ParsedData.SourceFileName),
-        tostring(ParsedData.ObjectId)
-    ),
-    SiteUrl = tostring(ParsedData.SiteUrl),
-    SourceLabel = tostring(ParsedData.SensitivityLabelEventData.OldSensitivityLabelId),
-    DestinationLabel = tostring(ParsedData.SensitivityLabelEventData.SensitivityLabelId)
-| extend SensitivityLabelJustificationText = trim(
-    " ",
-    strcat(
-        tostring(ParsedData.SensitivityLabelEventData.JustificationText),
-        " ",
-        tostring(ParsedData.SensitivityLabelJustificationText)
-    )
+// Parse the RawEventData column to extract JSON data.
+| extend data = parse_json(tostring(RawEventData))
+// Determine the SourceFileName based on the ActionType.
+| extend SourceFileName = iif(
+    ActionType == "FileSensitivityLabelChanged", 
+    tostring(data.SourceFileName), 
+    tostring(data.ObjectId)
 )
-// Keep only true downgrades: label moves OUT of Strictly Confidential tier
-| where SourceLabel in (StrictlyConfidentialLabels)
-    and DestinationLabel !in (StrictlyConfidentialLabels)
-| project
-    Timestamp,
-    AccountDisplayName,
-    SourceLabelName = GetSensitivityLabelName(SourceLabel),
-    DestinationLabelName = GetSensitivityLabelName(DestinationLabel),
-    SensitivityLabelJustificationText,
-    SourceFileName,
-    Application,
-    UserAgent,
-    SiteUrl,
-    ActionType,
-    AccountId,
-    AccountObjectId,
-    SourceLabel,
-    DestinationLabel,
-    ReportId,
+// Extract the SiteUrl from the parsed JSON data.
+| extend SiteUrl = data.SiteUrl
+// Concatenate justification text from the sensitivity label event data.
+| extend SensitivityLabelJustificationText = strcat( 
+    tostring(data.SensitivityLabelEventData.JustificationText), 
+    tostring(data.SensitivityLabelJustificationText)
+)
+// Extract the old and new sensitivity label IDs from the event data.
+| extend SourceLabel = data.SensitivityLabelEventData.OldSensitivityLabelId
+| extend DestinationLabel = data.SensitivityLabelEventData.SensitivityLabelId
+// Filter events where the source label is in the HR / Highly Confidential tier
+// and the destination label is not.
+| where SourceLabel in ("5f92563e-3b82-49f4-aaa3-022eb8385f2c", "369e5562-f668-4f63-a47e-fbb6d598a6d2", "eb6948e4-a689-418f-add9-145b98813808", "defa4170-0d19-0005-0009-bc88714345d2", "c91e115c-34f0-4e44-9f94-53f10d30a2f5", "3fea72fd-03f0-48ed-bc29-91bc92d67a89", "fc3b1e91-53fa-4100-9038-8d7c700fbe86")
+    and DestinationLabel !in ("5f92563e-3b82-49f4-aaa3-022eb8385f2c", "369e5562-f668-4f63-a47e-fbb6d598a6d2", "eb6948e4-a689-418f-add9-145b98813808", "defa4170-0d19-0005-0009-bc88714345d2", "c91e115c-34f0-4e44-9f94-53f10d30a2f5", "3fea72fd-03f0-48ed-bc29-91bc92d67a89", "fc3b1e91-53fa-4100-9038-8d7c700fbe86")
+// Project the desired columns, using the listLabelNames function to get readable names for labels.
+| project 
+    Timestamp, 
+    AccountDisplayName, 
+    SourceLabelName = listLabelNames(SourceLabel), 
+    DestinationLabelName = listLabelNames(DestinationLabel), 
+    SensitivityLabelJustificationText, 
+    SourceFileName, 
+    Application, 
+    UserAgent, 
+    SiteUrl, 
+    ActionType, 
+    AccountId, 
+    AccountObjectId, 
+    SourceLabel, 
+    DestinationLabel, 
+    ReportId, 
     RawEventData
 | sort by Timestamp desc
